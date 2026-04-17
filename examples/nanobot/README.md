@@ -31,7 +31,7 @@ containers on the host via LXD.
 
 1. Edit the workspace path in `setup.sh` if needed.
 2. Run `setup.sh` as root on the host.
-3. Edit `config.json` per the [config.json changes](#configjson-changes) section below.
+3. Edit `config.json` per the [config.json](#configjson) section below.
 4. Create the config symlink (see [The config.json symlink issue](#the-configjson-symlink-issue)).
 5. Start the service:
 
@@ -54,41 +54,30 @@ user (UID 1000) and the container's `nanobot` user (UID 1000) see the same
 file ownership. Without this mapping, the mounted files would be owned by
 nobody/root and nanobot could not write to its own workspace.
 
-## config.json changes
+## config.json
 
-After running `setup.sh`, edit the nanobot workspace's `config.json`
-to match the container environment. The fields that need updating:
+The nanobot workspace's `config.json` lives at `/home/nanobot/code/nanobot/config.json`
+inside the container (the guest-side mount of your host workspace). You can edit it
+from the host since it's a shared mount:
 
-| Field | Value | Why |
-|---|---|---|
-| `agents.defaults.workspace` | `/home/nanobot/code/nanobot` | The guest-side mount path |
-| `providers.custom.apiBase` | `http://<HOST_IP>:8080/v1` | LLM provider reachable from container |
-| `tools.mcpServers` | `{}` | Clear any host-side MCP server configs |
-| `tools.exec.pathAppend` | `/home/nanobot/code/.venv/bin` | Adds the venv to the agent's PATH |
-| `tools.exec.allowedEnvKeys` | `["XDG_RUNTIME_DIR", "VIRTUAL_ENV"]` | Environment keys the agent may pass through |
+    nano /home/YOUR_USER/code/llm/nanobot/config.json
 
-Example Python snippet to apply these programmatically from the host:
+Or pull it out, edit, and push it back:
 
-```python
-import json
+    lxc file pull nanobot/home/nanobot/code/nanobot/config.json /tmp/config.json
+    nano /tmp/config.json
+    lxc file push /tmp/config.json nanobot/home/nanobot/code/nanobot/config.json
 
-WORKSPACE_HOST = "/home/YOUR_USER/code/llm/nanobot"  # your host workspace path
-WORKSPACE_GUEST = "/home/nanobot/code/nanobot"
-HOST_IP = "10.0.0.1"  # your bridge IP
+Two things need to match the container environment:
 
-with open(f"{WORKSPACE_HOST}/config.json") as f:
-    c = json.load(f)
+1. **Workspace path.** If your config sets a workspace path, it must be the
+   guest-side path (`/home/nanobot/code/nanobot`), not the host-side path.
+2. **LLM provider URL.** The provider endpoint must be reachable from inside
+   the container. Use the host's bridge IP (e.g. `http://10.0.0.1:8080/v1`),
+   not `localhost`.
 
-c["agents"]["defaults"]["workspace"] = WORKSPACE_GUEST
-c["providers"]["custom"]["apiBase"] = f"http://{HOST_IP}:8080/v1"
-c["tools"]["mcpServers"] = {}
-c["tools"]["exec"]["allowedEnvKeys"] = ["XDG_RUNTIME_DIR", "VIRTUAL_ENV"]
-c["tools"]["exec"]["pathAppend"] = "/home/nanobot/code/.venv/bin"
-
-with open(f"{WORKSPACE_HOST}/config.json", "w") as f:
-    json.dump(c, f, indent=2)
-    f.write("\n")
-```
+See the [nanobot docs](https://pypi.org/project/nanobot-ai/) for the full
+config schema.
 
 ## The config.json symlink issue
 
@@ -140,14 +129,10 @@ Nanobot has WhatsApp support built in — no extra Python packages needed. It
 uses a local Node.js bridge that acts as a WhatsApp Web client, linking to your
 existing phone number. No WhatsApp Business API or third-party service required.
 
-You'll need Node.js >= 18 inside the container. Add these lines to
-`container-setup.sh`:
+The bridge needs Node.js >= 18. Debian Trixie ships Node.js 20.x, so you can
+install it directly:
 
-```bash
-# In container-setup.sh — add after the apt install line
-su - nanobot -c 'curl -fsSL https://deb.nodesource.com/setup_18.x | sudo bash -'
-apt install -y nodejs
-```
+    lxc exec nanobot -- apt install -y nodejs
 
 ### Pair and run the bridge
 
@@ -206,8 +191,8 @@ config:
 
     lxc exec nanobot -- systemctl start nanobot
 
-The service runs as the `nanobot` user with the venv on PATH. It restarts
-automatically on failure with a 10-second delay.
+The service runs as the `nanobot` user, using the venv's nanobot binary directly.
+It restarts automatically on failure with a 10-second delay.
 
 ## Day-to-day operations
 
