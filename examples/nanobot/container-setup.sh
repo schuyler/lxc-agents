@@ -27,14 +27,4 @@ su - nanobot -c "
     uv pip install nanobot-ai
 "
 
-# Install the IRC channel plugin if the source is available in the workspace.
-if [ -d /home/nanobot/code/nanobot/nanobot-channel-irc ]; then
-    echo "--- Installing nanobot-channel-irc ---"
-    su - nanobot -c "
-        export PATH=\"\$HOME/.local/bin:\$PATH\"
-        cd ~/code
-        uv pip install -e ~/code/nanobot/nanobot-channel-irc
-    "
-fi
-
 echo "=== Container setup complete ==="

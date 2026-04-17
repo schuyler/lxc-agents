@@ -16,8 +16,7 @@ containers on the host via LXD.
 ## Prerequisites
 
 - Host set up per [host-setup.md](../../docs/host-setup.md) (LXD installed, bridge configured)
-- A nanobot workspace directory on the host with `config.json` and any custom
-  channel packages
+- A nanobot workspace directory on the host with `config.json`
 
 ## Files
 
@@ -27,23 +26,217 @@ containers on the host via LXD.
 | `container-setup.sh` | Runs inside the container. Creates the `nanobot` user, installs packages, sets up a venv, and installs nanobot. |
 | `nanobot.service` | Systemd unit that runs `nanobot gateway` as the nanobot user. |
 | `envrc` | direnv-style environment file for interactive use inside the container. |
-| `nanobot-wiring.md` | Wiring details: config.json fields, workspace mounts, LXC skill, day-to-day operations. |
 
 ## Usage
 
 1. Edit the workspace path in `setup.sh` if needed.
 2. Run `setup.sh` as root on the host.
-3. Follow the wiring instructions in [nanobot-wiring.md](nanobot-wiring.md)
-   to finish configuring `config.json` and the LXC skill.
-4. Start the service:
+3. Edit `config.json` per the [config.json changes](#configjson-changes) section below.
+4. Create the config symlink (see [The config.json symlink issue](#the-configjson-symlink-issue)).
+5. Start the service:
 
        lxc exec nanobot -- systemctl start nanobot
 
-5. Watch logs:
+6. Watch logs:
 
        lxc exec nanobot -- journalctl -u nanobot -f
 
-## Wiring details
+## Workspace mount
 
-See [nanobot-wiring.md](nanobot-wiring.md) for the full explanation of
-workspace mounts, config.json fields, the LXC skill, and day-to-day operations.
+The setup script mounts the host-side nanobot workspace into the container
+using an LXC disk device. File ownership works because `setup.sh` configures
+`raw.idmap` on the container:
+
+    raw.idmap=both 1000 1000
+
+This maps UID and GID 1000 identically between host and guest. The host-side
+user (UID 1000) and the container's `nanobot` user (UID 1000) see the same
+file ownership. Without this mapping, the mounted files would be owned by
+nobody/root and nanobot could not write to its own workspace.
+
+## config.json changes
+
+After running `setup.sh`, edit the nanobot workspace's `config.json`
+to match the container environment. The fields that need updating:
+
+| Field | Value | Why |
+|---|---|---|
+| `agents.defaults.workspace` | `/home/nanobot/code/nanobot` | The guest-side mount path |
+| `providers.custom.apiBase` | `http://<HOST_IP>:8080/v1` | LLM provider reachable from container |
+| `tools.mcpServers` | `{}` | Clear any host-side MCP server configs |
+| `tools.exec.pathAppend` | `/home/nanobot/code/.venv/bin` | Adds the venv to the agent's PATH |
+| `tools.exec.allowedEnvKeys` | `["XDG_RUNTIME_DIR", "VIRTUAL_ENV"]` | Environment keys the agent may pass through |
+
+Example Python snippet to apply these programmatically from the host:
+
+```python
+import json
+
+WORKSPACE_HOST = "/home/YOUR_USER/code/llm/nanobot"  # your host workspace path
+WORKSPACE_GUEST = "/home/nanobot/code/nanobot"
+HOST_IP = "10.0.0.1"  # your bridge IP
+
+with open(f"{WORKSPACE_HOST}/config.json") as f:
+    c = json.load(f)
+
+c["agents"]["defaults"]["workspace"] = WORKSPACE_GUEST
+c["providers"]["custom"]["apiBase"] = f"http://{HOST_IP}:8080/v1"
+c["tools"]["mcpServers"] = {}
+c["tools"]["exec"]["allowedEnvKeys"] = ["XDG_RUNTIME_DIR", "VIRTUAL_ENV"]
+c["tools"]["exec"]["pathAppend"] = "/home/nanobot/code/.venv/bin"
+
+with open(f"{WORKSPACE_HOST}/config.json", "w") as f:
+    json.dump(c, f, indent=2)
+    f.write("\n")
+```
+
+## The config.json symlink issue
+
+Nanobot reads `config.json` from the current working directory. The systemd
+service sets `WorkingDirectory=/home/nanobot/code`, but the actual config
+lives at `/home/nanobot/code/nanobot/config.json` (inside the mounted
+workspace). You have two options:
+
+1. Symlink: `ln -s nanobot/config.json /home/nanobot/code/config.json`
+2. Change `WorkingDirectory` in the service file to
+   `/home/nanobot/code/nanobot`.
+
+Option 1 keeps the working directory as a parent of the workspace, which is
+useful if the agent needs to write files alongside it.
+
+Run this after setup.sh completes and before starting the service:
+
+    lxc exec nanobot -- su - nanobot -c 'ln -sf nanobot/config.json ~/code/config.json'
+
+## LXC skill
+
+The setup script copies `skills/lxc/` from this repository into the
+nanobot workspace's `skills/` directory. Nanobot loads skill files at startup
+and makes them available to the agent as instructions.
+
+The skill teaches the agent the `lxc` CLI commands for creating, listing,
+executing in, and destroying containers, using the `host:` remote prefix that
+was registered during setup.
+
+If you re-run setup, the skill directory is replaced. If you customize the
+skill, keep your changes outside the `skills/lxc/` path or they will be
+overwritten.
+
+## nanobot agent vs nanobot gateway
+
+Nanobot has two relevant commands:
+
+- `nanobot agent` runs a single agent session interactively. Useful for
+  debugging or one-off tasks.
+- `nanobot gateway` starts a persistent process that serves incoming requests
+  and dispatches them to agents. This is what the systemd service runs.
+
+The service file runs `nanobot gateway` because the typical use case is a
+long-running agent that responds to incoming requests.
+
+## Connecting to WhatsApp
+
+Nanobot has WhatsApp support built in — no extra Python packages needed. It
+uses a local Node.js bridge that acts as a WhatsApp Web client, linking to your
+existing phone number. No WhatsApp Business API or third-party service required.
+
+You'll need Node.js >= 18 inside the container. Add these lines to
+`container-setup.sh`:
+
+```bash
+# In container-setup.sh — add after the apt install line
+su - nanobot -c 'curl -fsSL https://deb.nodesource.com/setup_18.x | sudo bash -'
+apt install -y nodejs
+```
+
+### Pair and run the bridge
+
+`nanobot channels login whatsapp` does two things: on first run it pairs with
+your phone (displaying a QR code), and on every run it starts the bridge
+process that stays connected to WhatsApp. This process must remain running for
+the gateway to send and receive messages.
+
+Pair your device by running:
+
+    lxc exec nanobot -- su - nanobot -c 'cd code && nanobot channels login whatsapp'
+
+Scan the QR code via WhatsApp > Settings > Linked Devices on your phone.
+
+The bridge stays connected as long as that process is alive. To keep it
+running in the background, use a persistent session. For example, in a
+separate terminal:
+
+    lxc exec nanobot -- su - nanobot -c 'screen -dmS whatsapp bash -c "cd code && nanobot channels login whatsapp"'
+
+Then start the gateway:
+
+    lxc exec nanobot -- systemctl start nanobot
+
+### Configure config.json
+
+Add a `channels` key to your `config.json`:
+
+```json
+{
+  "channels": {
+    "whatsapp": {
+      "enabled": true,
+      "allowFrom": ["+1234567890"]
+    }
+  }
+}
+```
+
+`allowFrom` is a list of phone numbers (with country code) the agent will
+respond to. Use `["*"]` to allow all contacts — but note that anyone you allow
+can send messages to an agent that can execute arbitrary commands inside the
+container.
+
+### After upgrading nanobot
+
+Rebuild the bridge:
+
+    lxc exec nanobot -- su - nanobot -c 'rm -rf ~/.nanobot/bridge && cd code && nanobot channels login whatsapp'
+
+## systemd service setup
+
+The setup script pushes `nanobot.service` into the container and enables
+it. It does **not** start it -- you start it manually after verifying the
+config:
+
+    lxc exec nanobot -- systemctl start nanobot
+
+The service runs as the `nanobot` user with the venv on PATH. It restarts
+automatically on failure with a 10-second delay.
+
+## Day-to-day operations
+
+### Start the service
+
+    lxc exec nanobot -- systemctl start nanobot
+
+### Stop the service
+
+    lxc exec nanobot -- systemctl stop nanobot
+
+### Watch logs
+
+    lxc exec nanobot -- journalctl -u nanobot -f
+
+### Get a shell in the container
+
+    lxc exec nanobot -- su - nanobot
+
+The `su -` gives you a login shell. The venv is on PATH if you source `.envrc` manually or install [direnv](https://direnv.net/) and add the hook to `.bashrc`.
+
+### Run a one-off agent command
+
+    lxc exec nanobot -- su - nanobot -c 'cd code && nanobot agent'
+
+### Restart after config changes
+
+    lxc exec nanobot -- systemctl restart nanobot
+
+### Check container status
+
+    lxc list nanobot

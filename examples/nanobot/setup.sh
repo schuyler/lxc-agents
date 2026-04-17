@@ -105,6 +105,6 @@ echo "=== $(date) Setup complete ==="
 lxc list nanobot
 echo ""
 echo "Next:"
-echo "  1. Edit config.json per nanobot-wiring.md"
+echo "  1. Edit config.json per the nanobot README's 'config.json changes' section"
 echo "  2. lxc exec nanobot -- systemctl start nanobot"
 echo "  3. lxc exec nanobot -- journalctl -u nanobot -f"

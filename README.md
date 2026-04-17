@@ -22,7 +22,7 @@ host (LXD on br0)
 
 [**LXC skill**](skills/lxc/SKILL.md) — a `SKILL.md` you can drop into any agent that supports the [opencode skill format](https://opencode.ai/docs/skills/) (or anything that reads markdown instructions). Teaches the agent how to create, exec into, and destroy containers via the `lxc` CLI.
 
-[**Example: nanobot**](examples/nanobot/) — a complete worked example using [nanobot](https://pypi.org/project/nanobot-ai/), an IRC-connected agent that runs in a container and manages siblings on demand.
+[**Example: nanobot**](examples/nanobot/) — a complete worked example using [nanobot](https://pypi.org/project/nanobot-ai/), an agent framework that runs in a container and manages siblings on demand.
 
 [**Example: Claude Code**](examples/claude-code/) — a worked example running [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in its own container, accessible via SSH with tmux for persistent sessions.
 
