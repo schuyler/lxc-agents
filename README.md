@@ -1,6 +1,6 @@
 # lxc-agents
 
-Run autonomous LLM agents inside LXC containers where they can create and manage sibling containers on the same host.
+Run autonomous LLM agents inside LXC containers where they can create and manage other containers on the same host. This gives your agents the ability to create, launch, and manage network services -- or indeed anything that will run on your host OS kernel -- all in a self-contained environment that minimizes the blast radius.
 
 The idea: an agent lives in its own container, talks to the host's LXD daemon over TLS, and can spin up worker containers on demand. Everything gets real LAN IPs from DHCP — no NAT, no port forwarding.
 
@@ -9,8 +9,8 @@ host (LXD on br0)
   └─ LXD (:8443)
        ├─ agent (Debian trixie, UID-mapped)
        │    workspace mounted from host
-       │    TLS client cert → host LXD
-       │    HTTP → LLM endpoint
+       │    HTTP → host LXD
+       │    HTTP(S) → LLM endpoint
        │
        ├─ worker-1  ← created by agent
        └─ worker-2  ← created by agent
@@ -26,7 +26,13 @@ host (LXD on br0)
 
 [**Example: Claude Code**](examples/claude-code/) — a worked example running [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in its own container, accessible via SSH with tmux for persistent sessions.
 
-## Why LXC
+## CAVEAT HAX0R
+
+* The code and directions in this repo are less plug-and-play and more like a set of recipes that you or an agent can adapt to your purposes.
+* The examples have been tested and work for me, but they might not work for you for ... any number of reasons. Please send patches if you find anything grossly erroneous or foolish.
+* "Locks keep honest people honest." LXC containment can reduce your vulnerability to your bots making stupid mistakes, but a determined attacker can find ways to escape a container. Containers aren't a cure-all for [the lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/)!
+
+## Why LXC and not Docker
 
 Three reasons Docker was a bad fit for this:
 
