@@ -1,0 +1,15 @@
+[Unit]
+Description=Claude Code (tmux)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=claude
+EnvironmentFile=-/home/claude/.config/claude-code.env
+ExecStart=/bin/bash -c "tmux has-session -t claude 2>/dev/null || tmux new-session -d -s claude -c /home/claude/code claude"
+ExecStop=/usr/bin/tmux kill-session -t claude
+
+[Install]
+WantedBy=multi-user.target
