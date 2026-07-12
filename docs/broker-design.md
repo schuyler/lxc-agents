@@ -102,7 +102,8 @@ Where the agent experiments, builds, and breaks things.
 - **TTL-reaped**: no SSH activity for the idle window (default: stop after 2
   hours, delete after 24 — configurable) and the reaper cleans up. The failure
   mode this prevents is real: an agent tries four approaches and leaves three
-  half-configured containers behind.
+  half-configured containers behind. A stopped sandbox keeps its disk and can
+  be revived with `start_sandbox`.
 - **Quota-capped** per agent (default: 10 live sandboxes).
 - Created freely. With pre-baked images, creation takes seconds, so the
   cheapest-safest usage pattern — one sandbox per task, then discard — is also
@@ -159,7 +160,7 @@ vary:
 
 ## Tool surface (v1)
 
-Six tools. Deliberately omitted: exec, file transfer (SSH does both), config
+Seven tools. Deliberately omitted: exec, file transfer (SSH does both), config
 of any kind, snapshots, custom images, device attachment, privilege toggles.
 Every omission is a policy surface that doesn't exist.
 
@@ -179,11 +180,26 @@ sandbox only*). Fails if the sandbox quota is reached.
 No params. Returns this agent's sandboxes: `{id, ip, status, created,
 last_active, ttl_expires}`. Never shows other agents' containers.
 
-### `destroy_sandbox`
+### `start_sandbox`
 
 | param | type | notes |
 |---|---|---|
 | `id` | string | must be owned by the calling agent |
+
+Restarts a sandbox the reaper has stopped (disk state intact, processes
+gone). This tool exists solely so the reaper's stop stage isn't a dead end —
+without it, a stopped sandbox would be unrecoverable by the agent, since
+there is no other path back in.
+
+### `destroy`
+
+| param | type | notes |
+|---|---|---|
+| `id` | string | must be owned by the calling agent |
+
+Works on both sandboxes and services. Destroying a service also removes its
+registry entry. This is the teardown *and* redeploy path: replacing a service
+is destroy-and-repromote (see "Demotion" below).
 
 ### `promote`
 
@@ -263,18 +279,78 @@ broker/
   README.md
 ```
 
-## Open questions
+## Open questions, resolved
 
-- **Reaper defaults.** Stop at 2h idle / delete at 24h is a guess. "Idle"
-  is measured by SSH activity; is that the right signal, or should a sandbox
-  serving a test HTTP request count as active?
-- **Approval UX.** CLI-only at first; is a push notification (ntfy,
-  Matrix, email) worth the dependency?
-- **Sandbox-to-sandbox reachability.** Same isolated bridge means sandboxes
-  can reach each other. Feature (multi-container experiments) or bug
-  (cross-agent snooping)? Per-agent bridges would isolate agents from each
-  other at the cost of network sprawl.
-- **Incus.** pylxd works against Incus today, but the projects/restricted-cert
-  APIs are drifting apart. Worth pinning down before writing code.
-- **Demotion.** Is there a `demote(service)` that pulls a service off the LAN
-  back into sandbox-land, or is destroy-and-recreate enough?
+These were open in the first draft. Each now has a decision; the rationale is
+recorded so future disagreement can argue with the reasoning, not just the
+conclusion.
+
+### Reaper idle signal: SSH activity only
+
+**Decision:** "Idle" means no SSH connection to the sandbox. Inbound test
+traffic (an agent curling the HTTP server it just wrote) does **not** count.
+
+SSH is the agent's only management channel, so an agent still working on a
+sandbox will reconnect soon, and the first reaper stage only stops the
+container — disk intact, recoverable via `start_sandbox`. Counting arbitrary
+network traffic as activity would let any container with a chatty process
+keep itself alive forever, which defeats the reaper. And the deeper rule
+already covers the edge case: a sandbox whose *served traffic* matters is a
+service by definition, and should be promoted. The 2h-stop / 24h-delete
+defaults stand until real usage argues otherwise; both are config values.
+
+### Approval UX: CLI plus an optional webhook
+
+**Decision:** `lxc-broker approve` on the host is the approval mechanism. The
+only notification support is an optional `notify_url` — a bare HTTP POST fired
+on pending promotions (and reaper deletions). No Matrix, email, or other
+integrations.
+
+A generic webhook costs one config key and a few lines, and covers
+[ntfy](https://ntfy.sh), Slack-compatible endpoints, and home-automation hooks
+without the broker growing opinions about any of them. Anything richer is
+disproportionate for a security-critical component whose main virtue is being
+small enough to audit.
+
+### Sandbox-to-sandbox reachability: shared bridge, documented trust boundary
+
+**Decision:** v1 uses one shared isolated bridge. All agents on the same
+broker mutually trust each other, and the docs say so plainly.
+
+Multi-container experiments — an agent wiring a web container to a database
+container — are this repo's founding use case, so sibling reachability is a
+feature, not a leak. The homelab deployment this targets nearly always runs
+one agent (or several agents owned by the same person), so cross-agent
+snooping is a theoretical concern being weighed against real network sprawl:
+per-agent bridges mean per-agent subnets, routes, and firewall rules. If real
+multi-tenancy ever matters, LXD network ACLs on the shared bridge are the
+escape hatch that doesn't require re-plumbing — but it is explicitly out of
+scope for v1.
+
+### Incus: adapter seam now, second backend later
+
+**Decision:** v1 targets LXD via pylxd, matching the platform the rest of the
+repo is tested on. All LXD calls go through one thin adapter module —
+roughly ten operations (launch, stop, delete, device set, list, publish,
+project ops) — so an Incus backend is a contained change rather than a
+rewrite.
+
+The REST APIs are still near-identical, but the auth and
+projects/restricted-cert surfaces are drifting, and tracking both from day
+one doubles the test burden on the security-critical component before there
+is a single user of either. The adapter seam is cheap insurance; writing the
+second backend before someone needs it is not.
+
+### Demotion: no — destroy and re-promote
+
+**Decision:** There is no `demote(service)`. Taking a service off the LAN is
+`destroy(id)`; replacing one is destroy, rebuild in a sandbox, re-promote.
+
+Demotion has ambiguous semantics that promotion doesn't: LAN clients may hold
+the DNS name and IP, the container keeps state accumulated while exposed, and
+a "demoted" container is neither a fresh sandbox nor a registered service —
+a third lifecycle state whose reaper and quota treatment would need defining.
+Destroy-and-recreate is unambiguous, and cheap base images make rebuild the
+easy path anyway. The one-way ratchet also preserves a useful invariant: every
+container on your LAN got there through a promotion that is still in the
+registry and the audit log.
