@@ -48,6 +48,7 @@ If your agent needs to run Docker containers or Docker Compose, you can install 
 
 - [Local models](docs/local-models.md) — running llama.cpp on the host and pointing containers at it
 - [Container setup](docs/container-setup.md) — provisioning containers with bootstrap scripts or cloud-init
+- [Broker design](docs/broker-design.md) — proposal for an MCP broker that manages container lifecycle so agents never hold LXD credentials
 
 ## You'll need
 
