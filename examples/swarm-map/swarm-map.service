@@ -1,0 +1,18 @@
+[Unit]
+Description=Swarm Map dashboard
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+User=swarm
+Group=swarm
+SupplementaryGroups=docker
+WorkingDirectory=/opt/swarm-map/app
+EnvironmentFile=/etc/swarm-map/swarm-map.env
+ExecStart=/usr/local/bin/node node_modules/next/dist/bin/next start --port ${PORT} --hostname 0.0.0.0
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
