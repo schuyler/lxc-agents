@@ -1,15 +1,18 @@
 # corvidae LXC Agent Example
 
 This example runs [corvidae](https://github.com/schuyler/corvidae) -- a Python LLM
-agent daemon -- in its own Debian LXC container, with the workspace mounted from
-the host and, optionally, a unix socket proxied in from a host-side
-[signal-cli](https://github.com/AsamK/signal-cli) daemon.
+agent daemon -- as a systemd service in its own Debian LXC container, with the
+workspace mounted from the host and, optionally, a unix socket proxied in from a
+host-side [signal-cli](https://github.com/AsamK/signal-cli) daemon.
 
 Unlike the [nanobot](../nanobot/) example, the container gets no LXD credentials
-and no sudo by default. The agent can't create sibling containers; see
-[Security notes](#security-notes) if you want that.
+and no sudo by default, so the agent can't create sibling containers. See
+[Security](#security) if you want that.
 
-## Synopsis
+WARNING: This example hasn't been run against a real container yet. What follows
+describes what the scripts are written to do. Expect to fix things.
+
+## Usage
 
 Everything is configured through environment variables:
 
@@ -19,8 +22,8 @@ Everything is configured through environment variables:
     sudo -E ./setup.sh
 
 The workspace must already contain a corvidae checkout (at `corvidae/` by
-default). `setup.sh` installs it, and anything matching `PLUGIN_DIRS`, editable.
-Afterwards, put an `agent.yaml` in the workspace and start the service:
+default). Once setup finishes, put an `agent.yaml` in the workspace and start
+the service:
 
     lxc exec myagent -- systemctl start myagent
     lxc exec myagent -- journalctl -u myagent -f
@@ -30,29 +33,32 @@ Afterwards, put an `agent.yaml` in the workspace and start the service:
 - LXD on a bridged LAN, per [host-setup.md](../../docs/host-setup.md).
 - Host uid/gid 1000 delegated to LXD, for `raw.idmap`. Add `root:1000:1` to both
   `/etc/subuid` and `/etc/subgid`, then restart LXD (`sudo snap restart lxd`).
-- A workspace directory on the host, containing a corvidae checkout.
-- The agent's uid is fixed at 1000 (the unit template refers to
-  `/run/user/1000`). Your workspace files should belong to host uid 1000.
+- Workspace files owned by host uid 1000. The agent's uid is fixed at 1000; the
+  unit template hard-codes `/run/user/1000`.
 
 ## What it does
 
+`setup.sh` validates its variables, the corvidae checkout and the drop-in path
+before it creates anything. Then it:
+
 1. Refuses to continue if the container already exists. It never deletes anything.
 2. Launches `images:debian/trixie` with `raw.idmap=both 1000 1000`,
-   `boot.autostart=true`, and any limits you set.
+   `boot.autostart=true`, and any limits or root size you set.
 3. Mounts the workspace.
-4. Runs `container-setup.sh` in the container: creates the user, installs
-   packages and [uv](https://docs.astral.sh/uv/), builds `~/venv` on Python 3.14,
-   installs corvidae and your plugins editable, sets the timezone, and enables
-   lingering for the agent user.
+4. Runs `container-setup.sh` in the container, which creates the user, installs
+   packages, sets the timezone, enables lingering for the agent user, installs
+   [uv](https://docs.astral.sh/uv/), builds `~/venv` on Python 3.14, and
+   installs corvidae (with its `dev` extra) and your plugins editable. Then
+   `setup.sh` pushes `envrc` to `~/.envrc`.
 5. If `SIGNAL_SOCKET_HOST` is set, adds a proxy device for it.
-6. Installs the systemd unit (and your drop-in, if any).
+6. Installs the systemd unit, and your drop-in if any.
 7. Runs `POST_SETUP_HOOK`, if any.
 8. Runs `daemon-reload` and `enable`. It doesn't start the service.
 
 If anything fails after the container is launched, the script exits (`set -e`)
 and leaves a half-provisioned container, which step 1 then refuses to touch.
-To recover, read `/tmp/$CONTAINER-setup.log` on the host to see what failed,
-fix it, delete the container, and rerun:
+Read `/tmp/$CONTAINER-setup.log` on the host to see what failed, fix it, delete
+the container, and rerun:
 
     lxc delete --force myagent
     sudo -E ./setup.sh
@@ -67,7 +73,7 @@ Only `WORKSPACE_HOST_PATH` is required.
 | `AGENT_USER` | `corvidae` | User inside the container (uid/gid 1000). |
 | `SERVICE` | `corvidae` | systemd unit name. Installed as `/etc/systemd/system/$SERVICE.service`. |
 | `WORKSPACE_HOST_PATH` | (required) | Host directory to mount. |
-| `WORKSPACE_GUEST_PATH` | `/home/$AGENT_USER/workspace` | Absolute; letters, digits and `_ . / -` only. Where it appears in the container. The unit runs from here and reads `agent.yaml` from here. |
+| `WORKSPACE_GUEST_PATH` | `/home/$AGENT_USER/workspace` | Where it appears in the container. Absolute; letters, digits and `_ . / -` only. The unit runs from here and reads `agent.yaml` from here. |
 | `CORVIDAE_SRC` | `corvidae` | Path to the corvidae checkout, relative to the workspace. |
 | `PLUGIN_DIRS` | (none) | Space-separated globs relative to the workspace, e.g. `plugins/*`. Each match with a `pyproject.toml` is installed editable. |
 | `UNIT_DROPIN` | (none) | Host path to a systemd drop-in, installed as `$SERVICE.service.d/<basename>`. A relative path is relative to your cwd. |
@@ -80,44 +86,42 @@ Only `WORKSPACE_HOST_PATH` is required.
 | `ROOT_SIZE` | (profile default) | Root disk size, e.g. `40GiB`. |
 | `SUDO` | `0` | `1` installs sudo with passwordless access for `$AGENT_USER`. |
 
-`corvidae.service` is a template. `setup.sh` fills in `@AGENT_USER@`,
-`@WORKSPACE@` and `@SERVICE@`.
-
 ## Files
 
 | File | Purpose |
 |---|---|
 | `setup.sh` | Host-side orchestrator. |
-| `container-setup.sh` | Runs inside the container as root. Receives the variables above via `lxc exec --env`. |
-| `corvidae.service` | Unit template. |
-| `envrc` | Installed as `~/.envrc`. Puts `~/venv` on `PATH`; sourced from `.bashrc`. |
+| `container-setup.sh` | Runs inside the container as root. Receives a subset of the variables above via `lxc exec --env` (`WORKSPACE_GUEST_PATH` arrives as `WORKSPACE`). |
+| `corvidae.service` | Unit template. `setup.sh` fills in `@AGENT_USER@`, `@WORKSPACE@` and `@SERVICE@`. |
+| `envrc` | Installed as `~/.envrc` and sourced from `.bashrc`. Puts `~/venv` on `PATH` and sets the variables `systemd-run --user` needs. |
 
 ## Notes
 
-**Venv location.** The venv is `/home/$AGENT_USER/venv`, outside the workspace
-mount. Editable installs record container paths, and a venv inside the mount
-would collide with whatever `.venv` the host has. Rebuilding the container
-rebuilds the venv, since `setup.sh` reinstalls everything.
+**The venv lives outside the workspace,** at `/home/$AGENT_USER/venv`. Editable
+installs record container paths, and a venv inside the mount would collide with
+whatever `.venv` the host has. Rebuilding the container rebuilds the venv, since
+`setup.sh` reinstalls everything.
 
 **The unit runs as the agent user.** corvidae can SIGTERM itself, and so can its
 shell children (`kill $PPID`), because they're direct children of the daemon.
-`Restart=always` brings it back, and no sudo is involved. `NoNewPrivileges`
-blocks sudo inside the service even with `SUDO=1`. The unit also sets
-`XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` so the agent's shell children
-can reach its user manager and use `systemd-run --user`.
+`Restart=always` brings it back, with no sudo involved, though systemd gives up
+after five starts in ten minutes. `NoNewPrivileges` blocks sudo inside the
+service even with `SUDO=1`. The unit also sets `XDG_RUNTIME_DIR` and
+`DBUS_SESSION_BUS_ADDRESS` so the agent's shell children can reach its user
+manager and use `systemd-run --user`.
 
-**Unverified.** `PrivateTmp` inside an unprivileged LXD container, and
-`systemd-run --user` from a system service in one, haven't been confirmed. If
-the unit fails with a namespace error, delete `PrivateTmp` from the template. A
-drop-in with `PrivateTmp=no` also works.
+**Unverified:** `PrivateTmp` inside an unprivileged LXD container, and
+`systemd-run --user` from a system service in one. If the unit fails with a
+namespace error, delete `PrivateTmp` from the template, or add a drop-in with
+`PrivateTmp=no`.
 
 **No `cli:` channels in `agent.yaml`.** The unit's stdin is `/dev/null`, and
 corvidae's CLI plugin sends the process SIGINT on stdin EOF, so the service
 would shut itself down at every start. Also don't run `corvidae cli` against the
 live workspace: it starts a second daemon on the same database and Signal socket.
 
-**Unit overrides.** To replace `ExecStart` (say, with a wrapper that records why
-the process exited), use a drop-in. It must first clear the inherited value:
+**Overriding `ExecStart`** (say, with a wrapper that records why the process
+exited) takes a drop-in that clears the inherited value first:
 
     [Service]
     ExecStart=
@@ -137,11 +141,11 @@ With `SIGNAL_SOCKET_HOST` set, `setup.sh` runs the equivalent of:
 
 `bind=container` means LXD listens inside the container and dials the host
 socket once per connection, so a signal-cli restart that recreates the host
-socket doesn't break the proxy. Existing connections get EOF, though, and the
-client has to reconnect. While signal-cli is down, connecting to the container
-socket probably succeeds and is then closed at once, which makes for noisy but
-harmless reconnect logs. None of this has been verified against a specific LXD
-release; test it before relying on it.
+socket shouldn't break the proxy. Existing connections get EOF and the client
+has to reconnect. While signal-cli is down, connecting to the container socket
+probably succeeds and is then closed at once: noisy reconnect logs, but
+harmless. None of this has been checked against a specific LXD release, so test
+it before relying on it.
 
 The default listen path is deliberately outside `/run`, which is a tmpfs inside
 the container: a socket created there could be hidden by the mount or vanish on
@@ -152,14 +156,13 @@ Only the JSON-RPC socket crosses over. The container never sees signal-cli's key
 store, which is the part you don't want to leak. Run signal-cli with
 `--receive-mode=on-connection` and don't expose it over TCP.
 
-## Security notes
+## Security
 
-This example does not set up LXD TLS trust, so the agent has no way to manage
-the host's containers. If you want that, see
+This example doesn't set up LXD TLS trust, so the agent has no way to manage the
+host's containers. If you want that, see
 [broker-design.md](../../docs/broker-design.md) for a design that keeps
-credentials out of the agent, or issue it a
-restricted certificate yourself (the broker design explains what that does and
-doesn't buy you).
+credentials out of the agent, or issue it a restricted certificate yourself (the
+broker design explains what that does and doesn't buy you).
 
 The workspace is writable from inside the container, and an agent that can edit
 its own workspace can edit its own plugins and prompts. Keep it in git, and

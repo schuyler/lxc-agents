@@ -26,12 +26,14 @@ host (LXD on br0)
 
 [**Example: Claude Code**](examples/claude-code/) — a worked example running [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in its own container, accessible via SSH with tmux for persistent sessions.
 
+[**Example: corvidae**](examples/corvidae/) — a worked example running [corvidae](https://github.com/schuyler/corvidae), a Python agent daemon, as a systemd service in its own container. No LXD credentials; optionally proxies in a host-side signal-cli socket.
+
 [**Example: Swarm Map**](examples/swarm-map/) — an unprivileged container with nested Docker running the [Swarm Map](https://github.com/cyborg-garden/swarm-map) agent dashboard.
 
 ## CAVEAT HAX0R
 
 * The code and directions in this repo are less plug-and-play and more like a set of recipes that you or an agent can adapt to your purposes.
-* Most of the examples have been tested and work for me (Swarm Map is new and has not been run yet), but they might not work for you for ... any number of reasons. Please send patches if you find anything grossly erroneous or foolish.
+* Most of the examples have been tested and work for me (Swarm Map and corvidae are new and haven't been run yet), but they might not work for you for ... any number of reasons. Please send patches if you find anything grossly erroneous or foolish.
 * "Locks keep honest people honest." LXC containment can reduce your vulnerability to your bots making stupid mistakes, but a determined attacker can find ways to escape a container. Containers aren't a cure-all for [the lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/)!
 
 ## Why LXC and not Docker
@@ -51,6 +53,7 @@ If your agent needs to run Docker containers or Docker Compose, you can install 
 - [Local models](docs/local-models.md) — running llama.cpp on the host and pointing containers at it
 - [Container setup](docs/container-setup.md) — provisioning containers with bootstrap scripts or cloud-init
 - [Broker design](docs/broker-design.md) — proposal for an MCP broker that manages container lifecycle so agents never hold LXD credentials
+- [Broker spec](docs/broker-spec.md) — the implementation spec for the broker
 
 ## You'll need
 
