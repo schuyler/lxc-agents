@@ -1,0 +1,28 @@
+[Unit]
+Description=corvidae agent daemon (@SERVICE@)
+After=network-online.target user@1000.service
+Wants=network-online.target user@1000.service
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=@AGENT_USER@
+Group=@AGENT_USER@
+WorkingDirectory=@WORKSPACE@
+Environment=HOME=/home/@AGENT_USER@
+Environment=VIRTUAL_ENV=/home/@AGENT_USER@/venv
+Environment=PATH=/home/@AGENT_USER@/venv/bin:/home/@AGENT_USER@/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+StandardInput=null
+ExecStart=/home/@AGENT_USER@/venv/bin/corvidae serve --config @WORKSPACE@/agent.yaml
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

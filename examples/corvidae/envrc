@@ -1,0 +1,6 @@
+# shellcheck shell=bash
+export VIRTUAL_ENV="$HOME/venv"
+export PATH="$VIRTUAL_ENV/bin:$HOME/.local/bin:$PATH"
+XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export XDG_RUNTIME_DIR
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
